@@ -48,5 +48,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+code-challenge-template-main/
 wx_data/
 *.txt

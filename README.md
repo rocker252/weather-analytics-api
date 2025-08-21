@@ -309,6 +309,30 @@ poetry run python -m weather_analytics_api.analyze
 
 *I spent quite a bit of time getting the duplicate detection right - originally tried to catch IntegrityError but learned that doesn't work with async sessions the way I expected.*
 
+### Manual Data Processing
+
+**For testing individual components:**
+
+```bash
+# Run data ingestion only (Problem 2)
+poetry run python -m weather_analytics_api.ingest
+
+# Run statistics calculation only (Problem 3)  
+poetry run python -m weather_analytics_api.analyze
+
+# Custom data directory
+poetry run python -m weather_analytics_api.ingest /path/to/custom/data
+
+# Check logs for start/end times and record counts
+# Both commands can be run multiple times safely
+```
+
+**What these commands do:**
+- `ingest`: Downloads weather data (if needed) and loads into database with duplicate detection
+- `analyze`: Calculates yearly statistics per weather station, ignoring missing values
+
+This allows reviewers to verify that Problems 2 and 3 work correctly as standalone components.
+
 ---
 
 ## Testing & Coverage
@@ -436,38 +460,54 @@ Memory: 2048 MiB
 
 ### 4. Infrastructure as Code
 
-I'd use **AWS CDK** with TypeScript because it's more maintainable than raw CloudFormation:
+I'd use **AWS CDK** with Python to keep everything in the same language:
 
-```typescript
-export class WeatherApiStack extends Stack {
-  constructor(scope: Construct, id: string) {
-    super(scope, id);
-    
-    // VPC with public/private subnets across 2 AZs
-    const vpc = new ec2.Vpc(this, 'WeatherVpc', {
-      maxAzs: 2,
-      natGateways: 1  // Cost optimization - 1 NAT instead of 2
-    });
-    
-    // RDS PostgreSQL in private subnets
-    const database = new rds.DatabaseInstance(this, 'WeatherDB', {
-      engine: rds.DatabaseInstanceEngine.postgres({
-        version: rds.PostgresEngineVersion.VER_15
-      }),
-      instanceType: ec2.InstanceType.of(
-        ec2.InstanceClass.T3, 
-        ec2.InstanceSize.MICRO
-      ),
-      vpc,
-      vpcSubnets: { 
-        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS 
-      },
-      removalPolicy: RemovalPolicy.SNAPSHOT // Safety first
-    });
-    
-    // ECS Cluster and Service setup would go here...
-  }
-}
+```python
+from aws_cdk import (
+    Stack,
+    aws_ec2 as ec2,
+    aws_rds as rds,
+    aws_ecs as ecs,
+    RemovalPolicy
+)
+from constructs import Construct
+
+class WeatherApiStack(Stack):
+    def __init__(self, scope: Construct, construct_id: str, **kwargs):
+        super().__init__(scope, construct_id, **kwargs)
+        
+        # VPC with public/private subnets across 2 AZs
+        vpc = ec2.Vpc(
+            self, "WeatherVpc",
+            max_azs=2,
+            nat_gateways=1  # Cost optimization - 1 NAT instead of 2
+        )
+        
+        # RDS PostgreSQL in private subnets
+        database = rds.DatabaseInstance(
+            self, "WeatherDB",
+            engine=rds.DatabaseInstanceEngine.postgres(
+                version=rds.PostgresEngineVersion.VER_15
+            ),
+            instance_type=ec2.InstanceType.of(
+                ec2.InstanceClass.BURSTABLE3,
+                ec2.InstanceSize.MICRO
+            ),
+            vpc=vpc,
+            vpc_subnets=ec2.SubnetSelection(
+                subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS
+            ),
+            removal_policy=RemovalPolicy.SNAPSHOT  # Safety first
+        )
+        
+        # ECS Cluster
+        cluster = ecs.Cluster(
+            self, "WeatherCluster",
+            vpc=vpc,
+            container_insights=True
+        )
+        
+        # ECS Service setup would go here...
 ```
 
 ### 5. CI/CD Pipeline
